@@ -1,0 +1,112 @@
+name: Linux x86_64 plugin
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    container: ubuntu:22.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential cmake pkg-config \
+            libusb-1.0-0-dev libpcsclite-dev binutils python3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build, test and package
+        env:
+          RW_REV: 191172deabe0599a8403f9a0cc75206ddb5376fd
+          RW_SHA256: 7c6237b5b30efab634f234d3b45cfffe8cc2a78b2b9f3046b8e537bbd06aefc8
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          # Task-owned dependency extraction: 10 MiB archive, 100 MiB tree limit.
+          dep="${RUNNER_TEMP}/pcsc-rw5100-source"
+          rm -rf -- "$dep"
+          mkdir -p "$dep"
+          trap 'rm -rf -- "$dep"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          curl --fail --location --retry 3 --max-filesize 10485760 \
+            "https://github.com/rw5100/librw5100/archive/${RW_REV}.tar.gz" \
+            -o "$dep/source.tar.gz"
+          printf '%s  %s\n' "$RW_SHA256" "$dep/source.tar.gz" | sha256sum --check
+          python3 - "$dep" <<'PY'
+          import pathlib, sys, tarfile
+          root = pathlib.Path(sys.argv[1])
+          with tarfile.open(root / 'source.tar.gz') as archive:
+              members = archive.getmembers()
+              assert sum(m.size for m in members) <= 100 * 1024 * 1024
+              for m in members:
+                  path = pathlib.PurePosixPath(m.name)
+                  assert not path.is_absolute() and '..' not in path.parts
+                  assert m.isfile() or m.isdir()
+              archive.extractall(root, members=members)
+          PY
+          cmake -S "$dep/librw5100-${RW_REV}" -B build-library -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-library --parallel 2
+          ctest --test-dir build-library --output-on-failure
+          cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release \
+            -DRW5100_SOURCE_DIR="$dep/librw5100-${RW_REV}" -DBUILD_SHARED_LIBS=OFF
+          cmake --build build-release --parallel 2
+          ctest --test-dir build-release --output-on-failure
+          python3 tools/check-linux-bundle.py build-release/ifd-rw5100.bundle
+          mkdir -p build-release/dist
+          cp docs/linux-binary.md build-release/INSTALL.md
+          cp src/ifdhandler.h build-release/IFD-HEADER-NOTICE.txt
+          printf 'pcsc-rw5100=%s\nlibrw5100=%s\nbuild=Ubuntu 22.04 x86_64\n' \
+            "$GITHUB_SHA" "$RW_REV" > build-release/BUILD-INFO.txt
+          ldd build-release/ifd-rw5100.bundle/Contents/Linux/ifd-rw5100 \
+            >> build-release/BUILD-INFO.txt
+          tar -C build-release -czf build-release/dist/pcsc-rw5100-linux-x86_64.tar.gz \
+            ifd-rw5100.bundle INSTALL.md IFD-HEADER-NOTICE.txt BUILD-INFO.txt
+          (cd build-release/dist && sha256sum ./*.tar.gz > SHA256SUMS)
+      - name: Upload plugin
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pcsc-rw5100-linux-x86_64
+          path: build-release/dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: bundle
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download native packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: pcsc-rw5100-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify checksums
+        run: cd release-assets && sha256sum --check SHA256SUMS
+
+      - name: Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            release-assets/pcsc-rw5100-*.tar.gz
+            release-assets/SHA256SUMS
+          fail_on_unmatched_files: true
+          generate_release_notes: true
