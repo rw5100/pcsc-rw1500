@@ -1,0 +1,9 @@
+/build/
+/build-*/
+/.cache/
+/.direnv/
+__pycache__/
+*.o
+*.so
+*.dylib
+*.dSYM/

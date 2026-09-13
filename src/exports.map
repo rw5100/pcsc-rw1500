@@ -1,0 +1,13 @@
+{ global:
+  IFDHCreateChannelByName;
+  IFDHCreateChannel;
+  IFDHCloseChannel;
+  IFDHICCPresence;
+  IFDHGetCapabilities;
+  IFDHSetCapabilities;
+  IFDHPowerICC;
+  IFDHSetProtocolParameters;
+  IFDHTransmitToICC;
+  IFDHControl;
+local: *;
+};

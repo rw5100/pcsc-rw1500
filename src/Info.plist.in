@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>moe.huggy.rw5100.ifd</string>
+<key>CFBundleExecutable</key><string>ifd-rw5100</string>
+<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+<key>CFBundlePackageType</key><string>BNDL</string>
+<key>CFBundleVersion</key><string>@PROJECT_VERSION@</string>
+<key>CFBundleShortVersionString</key><string>@PROJECT_VERSION@</string>
+<key>ifdCapabilities</key><string>0x00000000</string>
+<key>ifdProtocolSupport</key><string>0x00000003</string>
+<key>ifdVersionNumber</key><string>0x00000001</string>
+<key>ifdManufacturerString</key><string>RW5100 project</string>
+<key>ifdProductString</key><string>RW5100 libusb IFD Handler</string>
+<key>ifdVendorID</key><array><string>0x04dd</string></array>
+<key>ifdProductID</key><array><string>0x9259</string></array>
+<key>ifdFriendlyName</key><array><string>RW5100 USB Smart Card Reader</string></array>
+</dict></plist>
