@@ -3,6 +3,7 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
+#include <syslog.h>
 
 #define READERS 16
 #define IO_TIMEOUT 5000
@@ -88,7 +89,7 @@ __attribute__((visibility("default"))) RESPONSECODE IFDHCloseChannel(DWORD lun) 
     pthread_mutex_lock(&lock);
     struct reader *r=find(lun); RESPONSECODE e=IFD_NO_SUCH_DEVICE;
     if(r) {
-        int result=rw_power_off(r->device,IO_TIMEOUT);
+        int state; int result=rw_status(r->device,&state,IO_TIMEOUT);
         e=result==RW_ERROR_NO_CARD?IFD_SUCCESS:error(result);
         rw_close(r->device); memset(r,0,sizeof(*r));
     }
@@ -141,7 +142,7 @@ __attribute__((visibility("default"))) RESPONSECODE IFDHPowerICC(DWORD lun,DWORD
     if(r) {
         if(action==IFD_POWER_DOWN) {
             invalidate(r);
-            int result=rw_power_off(r->device,IO_TIMEOUT);
+            int state; int result=rw_status(r->device,&state,IO_TIMEOUT);
             e=result==RW_ERROR_NO_CARD?IFD_SUCCESS:error(result);
         } else if(action==IFD_POWER_UP || action==IFD_RESET) {
             /* The IFD caller supplies MAX_ATR_SIZE bytes; macOS initializes
@@ -151,10 +152,13 @@ __attribute__((visibility("default"))) RESPONSECODE IFDHPowerICC(DWORD lun,DWORD
                 int state=RW_CARD_ABSENT; invalidate(r);
                 int result=rw_status(r->device,&state,IO_TIMEOUT);
                 size_t n=sizeof(r->atr);
-                if(!result) result=rw_reset(r->device,action==IFD_RESET && state==RW_CARD_POWERED,
+                if(!result) result=rw_reset(r->device,action==IFD_RESET,
                                            r->atr,&n,IO_TIMEOUT);
                 if(!result) { r->atr_len=n; memcpy(atr,r->atr,n); *length=(DWORD)n; }
                 else invalidate(r);
+                syslog(result?LOG_ERR:LOG_NOTICE,
+                       "rw5100 PowerICC lun=%u action=%u state=%d warm=%d result=%d atr_length=%zu",
+                       (unsigned)lun,(unsigned)action,state,action==IFD_RESET,result,n);
                 e=error(result);
             }
         } else e=IFD_NOT_SUPPORTED;
