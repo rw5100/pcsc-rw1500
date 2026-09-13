@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 
 #define READERS 16
 #define IO_TIMEOUT 5000
@@ -11,6 +12,8 @@
 static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
 static struct reader {
     rw_device *device;
+    int allocated;
+    uint64_t retry_at;
     DWORD lun;
     rw_device_info address;
     uint8_t atr[MAX_ATR_SIZE];
@@ -19,7 +22,7 @@ static struct reader {
 } readers[READERS];
 static struct reader *find(DWORD lun) {
     for(unsigned i=0;i<READERS;i++)
-        if(readers[i].device && readers[i].lun==lun) return &readers[i];
+        if(readers[i].allocated && readers[i].lun==lun) return &readers[i];
     return NULL;
 }
 static void invalidate(struct reader *r) {
@@ -35,6 +38,24 @@ static RESPONSECODE error(int e) {
     case RW_ERROR_UNSUPPORTED:return IFD_NOT_SUPPORTED;
     default:return IFD_COMMUNICATION_ERROR;
     }
+}
+/* A transport failure requires a new handle, never an APDU retry. */
+static uint64_t now_ms(void) {
+    struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t);
+    return (uint64_t)t.tv_sec*1000+(uint64_t)t.tv_nsec/1000000;
+}
+static int presence_status(struct reader *r,int *state) {
+    int result=r->device?rw_status(r->device,state,IO_TIMEOUT):RW_ERROR_STATE;
+    if(result!=RW_ERROR_STATE) return result;
+    invalidate(r);
+    if(now_ms()<r->retry_at) return result;
+    rw_close(r->device); r->device=NULL;
+    result=rw_open(&r->device,&r->address);
+    r->retry_at=now_ms()+1000;
+    syslog(result?LOG_ERR:LOG_NOTICE,"rw5100 reopen lun=%u bus=%u address=%u result=%d",
+           (unsigned)r->lun,r->address.bus,r->address.address,result);
+    if(!result) result=rw_status(r->device,state,IO_TIMEOUT);
+    return result;
 }
 /* Parse only known resource-manager USB names. Never ignore an unknown suffix. */
 static int selector(const char *name,rw_device_info *out,int *exact) {
@@ -61,7 +82,7 @@ static RESPONSECODE open_reader(DWORD lun,const char *name) {
     rw_device_info address={0}; int exact;
     if(!selector(name,&address,&exact)) return IFD_NO_SUCH_DEVICE;
     struct reader *r=NULL;
-    for(unsigned i=0;i<READERS;i++) if(!readers[i].device) { r=&readers[i]; break; }
+    for(unsigned i=0;i<READERS;i++) if(!readers[i].allocated) { r=&readers[i]; break; }
     if(!r) return IFD_COMMUNICATION_ERROR;
     if(!exact) {
         size_t count=1;
@@ -69,11 +90,11 @@ static RESPONSECODE open_reader(DWORD lun,const char *name) {
         if(e || count!=1) return e?error(e):IFD_NO_SUCH_DEVICE;
     }
     for(unsigned i=0;i<READERS;i++)
-        if(readers[i].device && readers[i].address.bus==address.bus &&
+        if(readers[i].allocated && readers[i].address.bus==address.bus &&
            readers[i].address.address==address.address) return IFD_COMMUNICATION_ERROR;
     rw_device *device=NULL; int e=rw_open(&device,&address);
     if(e) return error(e);
-    r->device=device; r->address=address; r->lun=lun; invalidate(r);
+    r->allocated=1; r->device=device; r->address=address; r->lun=lun; invalidate(r);
     return IFD_SUCCESS;
 }
 __attribute__((visibility("default"))) RESPONSECODE IFDHCreateChannelByName(DWORD lun,LPSTR name) {
@@ -89,7 +110,7 @@ __attribute__((visibility("default"))) RESPONSECODE IFDHCloseChannel(DWORD lun) 
     pthread_mutex_lock(&lock);
     struct reader *r=find(lun); RESPONSECODE e=IFD_NO_SUCH_DEVICE;
     if(r) {
-        int state; int result=rw_status(r->device,&state,IO_TIMEOUT);
+        int state; int result=r->device?rw_status(r->device,&state,IO_TIMEOUT):RW_OK;
         e=result==RW_ERROR_NO_CARD?IFD_SUCCESS:error(result);
         rw_close(r->device); memset(r,0,sizeof(*r));
     }
@@ -99,7 +120,7 @@ __attribute__((visibility("default"))) RESPONSECODE IFDHICCPresence(DWORD lun) {
     pthread_mutex_lock(&lock);
     struct reader *r=find(lun); RESPONSECODE e=IFD_NO_SUCH_DEVICE;
     if(r) {
-        int status; int result=rw_status(r->device,&status,IO_TIMEOUT);
+        int status=RW_CARD_ABSENT; int result=presence_status(r,&status);
         e=result?error(result):(status==RW_CARD_ABSENT?IFD_ICC_NOT_PRESENT:IFD_ICC_PRESENT);
         if(result || status!=RW_CARD_POWERED) invalidate(r);
     }

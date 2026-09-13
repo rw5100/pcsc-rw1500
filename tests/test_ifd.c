@@ -6,11 +6,11 @@
 #define CHECK(x) do { if(!(x)) { fprintf(stderr,"line %d: %s\n",__LINE__,#x); exit(1); } } while(0)
 struct rw_device { int id; };
 static struct rw_device device;
-static int present=RW_CARD_PRESENT,tx_error,transmits,selected=-1,closed,poweroffs,last_warm=-1;
+static int present=RW_CARD_PRESENT,tx_error,transmits,selected=-1,closed,poweroffs,last_warm=-1,status_error,opens,open_error;
 int rw_enumerate(rw_device_info *out,size_t *n) { CHECK(*n>=1); *n=1; *out=(rw_device_info){2,3,0x04dd,0x9259}; return 0; }
-int rw_open(rw_device **out,const rw_device_info *s) { CHECK(s->bus==2 && s->address==3); *out=&device; return 0; }
-void rw_close(rw_device *d) { CHECK(d==&device); closed++; }
-int rw_status(rw_device *d,int *s,unsigned timeout) { (void)d; CHECK(timeout); *s=present; return 0; }
+int rw_open(rw_device **out,const rw_device_info *s) { CHECK(s->bus==2 && s->address==3); opens++; if(open_error) { *out=NULL; return open_error; } status_error=0; *out=&device; return 0; }
+void rw_close(rw_device *d) { if(d) { CHECK(d==&device); closed++; } }
+int rw_status(rw_device *d,int *s,unsigned timeout) { (void)d; CHECK(timeout); *s=present; return status_error; }
 int rw_power_off(rw_device *d,unsigned timeout) { (void)d; (void)timeout; poweroffs++; present=RW_CARD_PRESENT; return 0; }
 int rw_reset(rw_device *d,int warm,uint8_t *atr,size_t *n,unsigned timeout) {
     (void)d; last_warm=warm; (void)timeout; CHECK(*n>=2); atr[0]=0x3b; atr[1]=0; *n=2; present=RW_CARD_POWERED; return 0;
@@ -45,12 +45,22 @@ int main(void) {
     present=RW_CARD_ABSENT; CHECK(IFDHICCPresence(0)==IFD_ICC_NOT_PRESENT);
     present=RW_CARD_PRESENT; CHECK(IFDHICCPresence(0)==IFD_ICC_PRESENT);
     n=0; CHECK(IFDHPowerICC(0,IFD_RESET,atr,&n)==0 && n==2 && last_warm==1);
+    status_error=RW_ERROR_STATE;
+    int before=opens;
+    CHECK(IFDHICCPresence(0)==IFD_ICC_PRESENT && opens==before+1 && transmits==3);
+    n=sizeof(atr); CHECK(IFDHGetCapabilities(0,TAG_IFD_ATR,&n,atr)==0 && n==0);
+    n=0; CHECK(IFDHPowerICC(0,IFD_RESET,atr,&n)==0 && n==2);
     present=RW_CARD_ABSENT; CHECK(IFDHICCPresence(0)==IFD_ICC_NOT_PRESENT);
     n=10; CHECK(IFDHControl(0,0,NULL,0,NULL,0,&n)==IFD_NOT_SUPPORTED && n==0);
-    CHECK(IFDHCloseChannel(0)==0 && closed==1 && poweroffs==0);
+    CHECK(IFDHCloseChannel(0)==0 && closed==2 && poweroffs==0);
     CHECK(IFDHICCPresence(0)==IFD_NO_SUCH_DEVICE);
     CHECK(IFDHCreateChannelByName(0x10000,"usb:04dd/9259:libudev:0:/dev/bus/usb/002/003")==0);
+    status_error=RW_ERROR_STATE; open_error=RW_ERROR_IO; before=opens;
+    CHECK(IFDHICCPresence(0x10000)==IFD_COMMUNICATION_ERROR && opens==before+1);
+    CHECK(IFDHCreateChannelByName(0,"usb:04dd/9259")==IFD_COMMUNICATION_ERROR);
+    CHECK(IFDHICCPresence(0x10000)==IFD_COMMUNICATION_ERROR && opens==before+1);
     CHECK(IFDHCloseChannel(0x10000)==0);
+    open_error=0; status_error=0;
 #ifdef __APPLE__
     CHECK(IFDHCreateChannelByName(0,"RW5100 USB Smart Card Reader")==0);
     CHECK(IFDHCloseChannel(0)==0);
