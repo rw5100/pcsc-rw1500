@@ -39,6 +39,10 @@ static RESPONSECODE error(int e) {
 static int selector(const char *name,rw_device_info *out,int *exact) {
     unsigned vid,pid,bus,addr,iface; int n=0,end=0;
     *exact=0;
+#ifdef __APPLE__
+    /* macOS passes the matching plist friendly name, not a USB address. */
+    if(name && !strcmp(name,"RW5100 USB Smart Card Reader")) return 1;
+#endif
     if(!name || sscanf(name,"usb:%4x/%4x%n",&vid,&pid,&n)!=2 ||
        vid!=0x04dd || pid!=0x9259) return 0;
     if(!name[n]) return 1;
@@ -131,7 +135,7 @@ __attribute__((visibility("default"))) RESPONSECODE IFDHSetCapabilities(DWORD lu
 }
 __attribute__((visibility("default"))) RESPONSECODE IFDHPowerICC(DWORD lun,DWORD action,PUCHAR atr,PDWORD length) {
     if(!length) return IFD_COMMUNICATION_ERROR;
-    DWORD capacity=*length; *length=0;
+    *length=0;
     pthread_mutex_lock(&lock);
     struct reader *r=find(lun); RESPONSECODE e=IFD_NO_SUCH_DEVICE;
     if(r) {
@@ -140,8 +144,9 @@ __attribute__((visibility("default"))) RESPONSECODE IFDHPowerICC(DWORD lun,DWORD
             int result=rw_power_off(r->device,IO_TIMEOUT);
             e=result==RW_ERROR_NO_CARD?IFD_SUCCESS:error(result);
         } else if(action==IFD_POWER_UP || action==IFD_RESET) {
-            /* Require full ATR capacity before resetting the physical card. */
-            if(!atr || capacity<MAX_ATR_SIZE) e=IFD_ERROR_INSUFFICIENT_BUFFER;
+            /* The IFD caller supplies MAX_ATR_SIZE bytes; macOS initializes
+             * AtrLength to zero and uses it only as an output. */
+            if(!atr) e=IFD_COMMUNICATION_ERROR;
             else {
                 int state=RW_CARD_ABSENT; invalidate(r);
                 int result=rw_status(r->device,&state,IO_TIMEOUT);

@@ -28,7 +28,7 @@ int main(void) {
     CHECK(IFDHCreateChannelByName(0,"usb:04dd/9259:libusb-1.0:2:3:0")==0);
     CHECK(IFDHCreateChannelByName(0x10000,"usb:04dd/9259")==IFD_COMMUNICATION_ERROR);
     CHECK(IFDHICCPresence(0)==IFD_ICC_PRESENT);
-    UCHAR atr[MAX_ATR_SIZE],rx[8]; DWORD n=sizeof(atr);
+    UCHAR atr[MAX_ATR_SIZE],rx[8]; DWORD n=0;
     CHECK(IFDHPowerICC(0,IFD_POWER_UP,atr,&n)==0 && n==2);
     n=1; CHECK(IFDHGetCapabilities(0,TAG_IFD_ATR,&n,atr)==IFD_ERROR_INSUFFICIENT_BUFFER && n==2);
     CHECK(IFDHSetProtocolParameters(0,SCARD_PROTOCOL_T1,0,0,0,0)==0 && selected==1);
@@ -46,5 +46,10 @@ int main(void) {
     CHECK(IFDHICCPresence(0)==IFD_NO_SUCH_DEVICE);
     CHECK(IFDHCreateChannelByName(0x10000,"usb:04dd/9259:libudev:0:/dev/bus/usb/002/003")==0);
     CHECK(IFDHCloseChannel(0x10000)==0);
+#ifdef __APPLE__
+    CHECK(IFDHCreateChannelByName(0,"RW5100 USB Smart Card Reader")==0);
+    CHECK(IFDHCloseChannel(0)==0);
+    CHECK(IFDHCreateChannelByName(0,"Some Other Reader")==IFD_NO_SUCH_DEVICE);
+#endif
     puts("IFD selection, ABI, lifecycle, buffer and no-replay tests passed"); return 0;
 }

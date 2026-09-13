@@ -11,9 +11,14 @@ int main(int argc,char **argv) {
     LOAD(IFDHCreateChannelByName); LOAD(IFDHCloseChannel); LOAD(IFDHICCPresence);
     LOAD(IFDHPowerICC); LOAD(IFDHGetCapabilities); LOAD(IFDHSetProtocolParameters); LOAD(IFDHTransmitToICC);
     int opened=0,failed=1; RESPONSECODE rc;
-    CALL(IFDHCreateChannelByName,0,"usb:04dd/9259"); opened=1;
+#ifdef __APPLE__
+    CALL(IFDHCreateChannelByName,0,"RW5100 USB Smart Card Reader");
+#else
+    CALL(IFDHCreateChannelByName,0,"usb:04dd/9259");
+#endif
+    opened=1;
     rc=p_IFDHICCPresence(0); printf("IFDHICCPresence: %ld\n",(long)rc); if(rc!=IFD_ICC_PRESENT) goto end;
-    unsigned char atr[MAX_ATR_SIZE]; DWORD length=sizeof(atr);
+    unsigned char atr[MAX_ATR_SIZE]; DWORD length=0;
     CALL(IFDHPowerICC,0,IFD_POWER_UP,atr,&length);
     printf("ATR:"); for(DWORD i=0;i<length;i++) printf(" %02X",atr[i]); puts("");
     unsigned char cached[MAX_ATR_SIZE]; DWORD n=sizeof(cached);
